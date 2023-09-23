@@ -2,6 +2,126 @@ package nondet
 
 import org.scalatest.flatspec.AnyFlatSpec
 
+package basic_operations {
+  // just for testing some scattered operations in the library
+  sealed trait Token
+  case object A extends Token
+  case object B extends Token
+
+  object Parser extends Combinators {
+    override type Elem = Token
+
+    lazy val a: Parser[Token] = elem(A)
+    lazy val b: Parser[Token] = elem(B)
+  }
+
+  class TestBasicOperations extends AnyFlatSpec {
+    import Parser._
+
+    "The parser combinators" should "handle ~" in {
+      assertResult(Seq(new ~(A, B))) {
+        (a ~ b).phrase(List(A, B)).toSeq
+      }
+    }
+
+    it should "handle | - only left" in {
+      assertResult(Seq(A)) {
+        (a | b).phrase(List(A)).toSeq
+      }
+    }
+
+    it should "handle | - only right" in {
+      assertResult(Seq(B)) {
+        (a | b).phrase(List(B)).toSeq
+      }
+    }
+
+    it should "handle | - both left and right" in {
+      assertResult(Seq(A, A)) {
+        (a | a).phrase(List(A)).toSeq
+      }
+    }
+
+    it should "handle ~>" in {
+      assertResult(Seq(B)) {
+        (a ~> b).phrase(List(A, B)).toSeq
+      }
+    }
+
+    it should "handle <~" in {
+      assertResult(Seq(A)) {
+        (a <~ b).phrase(List(A, B)).toSeq
+      }
+    }
+
+    it should "handle rep - no matches" in {
+      assertResult(Seq(List())) {
+        rep(a).apply(List(B)).map(_._1).toSeq
+      }
+    }
+
+    it should "handle rep - all intermediates" in {
+      assertResult(Seq(List(A, A, A), List(A, A), List(A), List())) {
+        rep(a).apply(List(A, A, A)).map(_._1).toSeq
+      }
+    }
+
+    it should "handle rep - whole phrase" in {
+      assertResult(Seq(List(A, A, A))) {
+        rep(a).phrase(List(A, A, A)).toSeq
+      }
+    }
+
+    it should "handle rep1 - all intermediates" in {
+      assertResult(Seq(List(A, A, A), List(A, A), List(A))) {
+        rep1(a).apply(List(A, A, A)).map(_._1).toSeq
+      }
+    }
+
+    it should "handle rep1 - whole phrase" in {
+      assertResult(Seq(List(A, A, A))) {
+        rep1(a).phrase(List(A, A, A)).toSeq
+      }
+    }
+
+    it should "handle rep1 - no matches" in {
+      assertResult(Seq()) {
+        rep1(a).apply(List(B)).map(_._1).toSeq
+      }
+    }
+
+    it should "handle repsep - all intermediates" in {
+      assertResult(Seq(List(A, A, A), List(A, A), List(A), List())) {
+        repsep(a, b).apply(List(A, B, A, B, A)).map(_._1).toSeq
+      }
+    }
+
+    it should "handle repsep - whole phrase" in {
+      assertResult(Seq(List(A, A, A))) {
+        repsep(a, b).phrase(List(A, B, A, B, A)).toSeq
+      }
+    }
+
+    it should "handle rep1sep - all intermediates" in {
+      assertResult(Seq(List(A, A, A), List(A, A), List(A))) {
+        rep1sep(a, b).apply(List(A, B, A, B, A)).map(_._1).toSeq
+      }
+    }
+
+    it should "handle rep1sep - whole phrase" in {
+      assertResult(Seq(List(A, A, A))) {
+        rep1sep(a, b).phrase(List(A, B, A, B, A)).toSeq
+      }
+    }
+
+    it should "handle rep1sep - no matches" in {
+      assertResult(Seq()) {
+        rep1sep(a, b).apply(List(B)).map(_._1).toSeq
+      }
+    }
+  }
+}
+
 package sexps {
   // deterministic
   // exp ::= INTEGER | `(` `+` exp exp `)`
@@ -26,7 +146,7 @@ package sexps {
     }
 
     def parse(tokens: List[Elem]): Seq[Exp] = {
-      expP.completeParses(tokens).toSeq
+      expP.phrase(tokens).toSeq
     }
   }
 
@@ -127,7 +247,7 @@ package dangling_else {
     }
 
     def parse(tokens: List[Elem]): Seq[Stmt] = {
-      stmtP.completeParses(tokens).toSeq
+      stmtP.phrase(tokens).toSeq
     }
   }
 
