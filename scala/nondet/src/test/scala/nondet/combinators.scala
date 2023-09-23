@@ -71,6 +71,19 @@ package sexps {
         parse(tokens)
       }
     }
+
+    it should "fail on something syntactically invalid" in {
+      // (+ 1 2
+      val tokens =
+        List(
+          LeftParenToken,
+          PlusToken,
+          IntToken(1),
+          IntToken(2))
+      assertResult(Seq()) {
+        parse(tokens)
+      }
+    }
   }
 }
 
