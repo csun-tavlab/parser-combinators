@@ -16,8 +16,8 @@ trait Combinators {
   trait Parser[+A] extends (List[Elem] => Iterator[(A, List[Elem])]) {
     self =>
 
-    def first(tokens: List[Elem]): Option[A] = {
-      self.apply(tokens).collectFirst({ case (a, Nil) => a })
+    def completeParses(tokens: List[Elem]): Iterator[A] = {
+      self.apply(tokens).collect({ case (a, Nil) => a})
     }
 
     def ~[B](pRaw: => Parser[B]): Parser[~[A, B]] = {
