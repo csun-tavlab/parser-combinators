@@ -47,6 +47,8 @@ trait Combinators {
 
     def ^^[B](f: A => B): Parser[B] = map(f)
 
+    def ^^^[B](b: B): Parser[B] = map(_ => b)
+
     def flatMap[B](f: A => Parser[B]): Parser[B] = {
       tokens1 => {
         self.apply(tokens1).flatMap({ case (a, tokens2) =>
