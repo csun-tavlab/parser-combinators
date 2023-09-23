@@ -122,8 +122,8 @@ package dangling_else {
     lazy val expP: Parser[Exp] = intP ^^ (IntLiteralExp.apply _)
     lazy val stmtP: Parser[Stmt] = {
       PassToken ^^^ PassStmt |
-      IfToken ~ expP ~ ThenToken ~ stmtP ^^ { case _ ~ e ~ _ ~ s => IfStmt(e, s, None) } |
-      IfToken ~ expP ~ ThenToken ~ stmtP ~ ElseToken ~ stmtP ^^ { case _ ~ e ~ _ ~ s1 ~ _ ~ s2 => IfStmt(e, s1, Some(s2)) }
+      (IfToken ~ expP ~ ThenToken ~ stmtP ~ opt(ElseToken ~ stmtP) ^^
+        { case _ ~ e ~ _ ~ s1 ~ op => IfStmt(e, s1, op.map(_._2)) })
     }
 
     def parse(tokens: List[Elem]): Seq[Stmt] = {
