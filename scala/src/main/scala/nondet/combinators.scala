@@ -149,4 +149,14 @@ trait Combinators {
   def rep1sep[A](p: => Parser[A], delim: => Parser[Any]): Parser[List[A]] = {
     repsep(p, delim).filter(_.nonEmpty)
   }
+
+  // mimics Prolog's once (https://www.swi-prolog.org/pldoc/man?predicate=once/1),
+  // so that only the first solution from the given parser will be considered.
+  // Intended as a performance optimization, particularly if greedy behavior
+  // is desired from rep and friends.
+  def once[A](p: => Parser[A]): Parser[A] = {
+    tokens => {
+      p(tokens).take(1)
+    }
+  }
 }

@@ -119,6 +119,12 @@ package basic_operations {
         rep1sep(a, b).apply(List(B)).map(_._1).toSeq
       }
     }
+
+    it should "handle once" in {
+      assertResult(Seq(List(A, A, A))) {
+        once(rep(a)).apply(List(A, A, A)).map(_._1).toSeq
+      }
+    }
   }
 }
 
