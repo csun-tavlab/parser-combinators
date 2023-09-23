@@ -1,2 +1,4 @@
-# compiled files
-*.class
+# Stuff that SBT creates
+.bsp
+project
+target
