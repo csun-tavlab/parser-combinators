@@ -125,6 +125,28 @@ package basic_operations {
         once(rep(a)).apply(List(A, A, A)).map(_._1).toSeq
       }
     }
+
+    it should "handle Mehmet's example" in {
+      // S ::= a S a S | ε
+      sealed trait ParseTree
+      case object Epsilon extends ParseTree
+      case class Nested(inner1: ParseTree, inner2: ParseTree) extends ParseTree
+
+      val expected =
+        Seq(
+          Nested(Nested(Epsilon, Epsilon), Epsilon), // (a (a ε a ε) a ε)
+          Nested(Epsilon, Nested(Epsilon, Epsilon))) // (a ε a (a ε a ε))
+
+      assertResult(expected) {
+        lazy val S: Parser[ParseTree] = {
+          (a ~ S ~ a ~ S ^^
+            { case _ ~ inner1 ~ _ ~ inner2 => Nested(inner1, inner2) }) |
+          success(Epsilon)
+        }
+
+        S.phrase(List(A, A, A, A)).toSeq
+      }
+    }
   }
 }
 
