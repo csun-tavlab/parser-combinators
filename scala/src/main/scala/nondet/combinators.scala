@@ -13,34 +13,63 @@ trait Combinators {
   // nondeterministic
   // type Parser[A] = (List[Elem]) => Iterator[(A, List[Elem])]
 
-  trait Parser[+A] extends (List[Elem] => Iterator[(A, List[Elem])]) {
+  object ParseInput {
+    def apply(tokens: List[Elem]): ParseInput = {
+      ParseInput(tokens, None)
+    }
+  }
+
+  case class ParseInput(
+    tokens: List[Elem],
+    traceLevel: Option[Int] // None if we aren't tracing, otherwise the stack level
+  ) {
+    def incrementTraceLevel: ParseInput = {
+      copy(traceLevel = traceLevel.map(_ + 1))
+    }
+    def withTrace(flag: Boolean): ParseInput = {
+      if (flag) {
+        copy(traceLevel = Some(0))
+      } else {
+        this
+      }
+    }
+    def withTokens(newTokens: List[Elem]): ParseInput = {
+      copy(tokens = newTokens)
+    }
+  }
+
+  trait Parser[+A] extends (ParseInput => Iterator[(A, List[Elem])]) {
     self =>
 
     def phrase(tokens: List[Elem]): Iterator[A] = {
-      self.apply(tokens).collect({ case (a, Nil) => a})
+      phrase(ParseInput(tokens))
+    }
+
+    def phrase(input: ParseInput): Iterator[A] = {
+      self.apply(input).collect({ case (a, Nil) => a})
     }
 
     def ~[B](pRaw: => Parser[B]): Parser[~[A, B]] = {
-      tokens1 => {
+      input1 => {
         lazy val p = pRaw
         for {
-          (a, tokens2) <- self.apply(tokens1)
-          (b, tokens3) <- p.apply(tokens2)
+          (a, tokens2) <- self.apply(input1)
+          (b, tokens3) <- p.apply(input1.withTokens(tokens2))
         } yield (new ~(a, b), tokens3)
       }
     }
 
     def |[B >: A](pRaw: => Parser[B]): Parser[B] = {
-      tokens => {
+      input => {
         // ++ for iterators already uses call-by-name...nice
-        self.apply(tokens) ++ pRaw.apply(tokens)
+        self.apply(input) ++ pRaw.apply(input)
       }
     }
 
     def map[B](f: A => B): Parser[B] = {
-      tokens1 => {
-        self.apply(tokens1).map({ case (a, tokens2) =>
-          (f(a), tokens2)
+      input1 => {
+        self.apply(input1).map({ case (a, input2) =>
+          (f(a), input2)
         })
       }
     }
@@ -50,16 +79,16 @@ trait Combinators {
     def ^^^[B](b: B): Parser[B] = map(_ => b)
 
     def flatMap[B](f: A => Parser[B]): Parser[B] = {
-      tokens1 => {
-        self.apply(tokens1).flatMap({ case (a, tokens2) =>
-          f(a).apply(tokens2)
+      input1 => {
+        self.apply(input1).flatMap({ case (a, tokens2) =>
+          f(a).apply(input1.withTokens(tokens2))
         })
       }
     }
 
     def filter(p: A => Boolean): Parser[A] = {
-      tokens => {
-        self.apply(tokens).filter(pair => p(pair._1))
+      input => {
+        self.apply(input).filter(pair => p(pair._1))
       }
     }
 
@@ -70,11 +99,17 @@ trait Combinators {
     def <~[B](pRaw: => Parser[B]): Parser[A] = {
       (self ~ pRaw) ^^ (_._1)
     }
+
+    def withTrace(flag: Boolean): Parser[A] = {
+      input => {
+        self(input.withTrace(flag))
+      }
+    }
   }
 
   def success[A](a: A): Parser[A] = {
-    tokens => {
-      Iterator((a, tokens))
+    input => {
+      Iterator((a, input.tokens))
     }
   }
 
@@ -83,8 +118,8 @@ trait Combinators {
   }
 
   def accept[A](pf: PartialFunction[Elem, A]): Parser[A] = {
-    tokens => {
-      tokens match {
+    input => {
+      input.tokens match {
         case head :: tail if pf.isDefinedAt(head) => Iterator((pf(head), tail))
         case _ => Iterator()
       }
@@ -92,20 +127,59 @@ trait Combinators {
   }
 
   implicit def elem(e: Elem): Parser[Elem] = {
-    tokens => {
-      tokens match {
+    input => {
+      input.tokens match {
         case (`e` :: tail) => Iterator((e, tail))
         case _ => Iterator()
       }
     }
   }
 
-  def opt[A](p: => Parser[A]): Parser[Option[A]] = {
-    p.map(a => Some(a)) | success(None)
+  // defines a parser that will appear in trace's output
+  def proc[A](name: String)(p: => Parser[A]): Parser[A] = {
+    input => {
+      input.traceLevel match {
+        case Some(stackLevel) => {
+          new Iterator[(A, List[Elem])] {
+            lazy val wrapped = p.apply(input.incrementTraceLevel)
+            var nextYielded = false
+
+            def printLevel(kind: String, suffix: String): Unit = {
+              val spacer = "  "
+              println(s"${spacer * stackLevel}[$stackLevel] ${kind}: ${name}(${input.tokens})$suffix")
+            }
+
+            def hasNext: Boolean = {
+              if (!nextYielded) {
+                printLevel("Call", "")
+              }
+              val retval = wrapped.hasNext
+              if (!retval) {
+                printLevel("Fail", "")
+              }
+              retval
+            }
+
+            def next(): (A, List[Elem]) = {
+              if (!nextYielded) {
+                printLevel("Call", "")
+                nextYielded = true
+              } else {
+                printLevel("Redo", "")
+              }
+              val retval = wrapped.next()
+              printLevel("Return", s" - $retval")
+              retval
+            }
+          }
+        }
+        case None => p(input)
+      }
+    }
   }
 
-  def phrase[A](p: Parser[A]): Parser[A] = {
-    tokens => p.phrase(tokens).map(a => (a, Nil))
+  def opt[A](p: => Parser[A]): Parser[Option[A]] = {
+    p.map(a => Some(a)) | success(None)
   }
 
   // In a nondeterministic sense, this will return
@@ -155,8 +229,8 @@ trait Combinators {
   // Intended as a performance optimization, particularly if greedy behavior
   // is desired from rep and friends.
   def once[A](p: => Parser[A]): Parser[A] = {
-    tokens => {
-      p(tokens).take(1)
+    input => {
+      p(input).take(1)
     }
   }
 }

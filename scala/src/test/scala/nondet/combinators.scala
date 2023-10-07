@@ -56,13 +56,13 @@ package basic_operations {
 
     it should "handle rep - no matches" in {
       assertResult(Seq(List())) {
-        rep(a).apply(List(B)).map(_._1).toSeq
+        rep(a).apply(ParseInput(List(B))).map(_._1).toSeq
       }
     }
 
     it should "handle rep - all intermediates" in {
       assertResult(Seq(List(A, A, A), List(A, A), List(A), List())) {
-        rep(a).apply(List(A, A, A)).map(_._1).toSeq
+        rep(a).apply(ParseInput(List(A, A, A))).map(_._1).toSeq
       }
     }
 
@@ -74,7 +74,7 @@ package basic_operations {
 
     it should "handle rep1 - all intermediates" in {
       assertResult(Seq(List(A, A, A), List(A, A), List(A))) {
-        rep1(a).apply(List(A, A, A)).map(_._1).toSeq
+        rep1(a).apply(ParseInput(List(A, A, A))).map(_._1).toSeq
       }
     }
 
@@ -86,13 +86,13 @@ package basic_operations {
 
     it should "handle rep1 - no matches" in {
       assertResult(Seq()) {
-        rep1(a).apply(List(B)).map(_._1).toSeq
+        rep1(a).apply(ParseInput(List(B))).map(_._1).toSeq
       }
     }
 
     it should "handle repsep - all intermediates" in {
       assertResult(Seq(List(A, A, A), List(A, A), List(A), List())) {
-        repsep(a, b).apply(List(A, B, A, B, A)).map(_._1).toSeq
+        repsep(a, b).apply(ParseInput(List(A, B, A, B, A))).map(_._1).toSeq
       }
     }
 
@@ -104,7 +104,7 @@ package basic_operations {
 
     it should "handle rep1sep - all intermediates" in {
       assertResult(Seq(List(A, A, A), List(A, A), List(A))) {
-        rep1sep(a, b).apply(List(A, B, A, B, A)).map(_._1).toSeq
+        rep1sep(a, b).apply(ParseInput(List(A, B, A, B, A))).map(_._1).toSeq
       }
     }
 
@@ -116,13 +116,13 @@ package basic_operations {
 
     it should "handle rep1sep - no matches" in {
       assertResult(Seq()) {
-        rep1sep(a, b).apply(List(B)).map(_._1).toSeq
+        rep1sep(a, b).apply(ParseInput(List(B))).map(_._1).toSeq
       }
     }
 
     it should "handle once" in {
       assertResult(Seq(List(A, A, A))) {
-        once(rep(a)).apply(List(A, A, A)).map(_._1).toSeq
+        once(rep(a)).apply(ParseInput(List(A, A, A))).map(_._1).toSeq
       }
     }
 
@@ -266,16 +266,61 @@ package dangling_else {
   object Parser extends Combinators {
     override type Elem = Token
 
-    lazy val intP: Parser[Int] = accept({ case IntToken(i) => i })
-    lazy val expP: Parser[Exp] = intP ^^ (IntLiteralExp.apply _)
-    lazy val stmtP: Parser[Stmt] = {
-      PassToken ^^^ PassStmt |
-      (IfToken ~ expP ~ ThenToken ~ stmtP ~ opt(ElseToken ~ stmtP) ^^
-        { case _ ~ e ~ _ ~ s1 ~ op => IfStmt(e, s1, op.map(_._2)) })
+    lazy val intP: Parser[Int] = proc("intP") {
+      accept({ case IntToken(i) => i })
+    }
+    lazy val expP: Parser[Exp] = proc("expP") {
+      intP ^^ (IntLiteralExp.apply _)
+    }
+    lazy val ifP: Parser[IfStmt] = proc("ifP") {
+      IfToken ~ expP ~ ThenToken ~ stmtP ~ opt(ElseToken ~ stmtP) ^^
+        { case _ ~ e ~ _ ~ s1 ~ op => IfStmt(e, s1, op.map(_._2)) }
+    }
+    lazy val stmtP: Parser[Stmt] = proc("stmtP") {
+      proc("passP")(PassToken ^^^ PassStmt) | ifP
     }
 
     def parse(tokens: List[Elem]): Seq[Stmt] = {
-      stmtP.phrase(tokens).toSeq
+      parse(tokens, false).toSeq
+    }
+
+    def parse(tokens: List[Elem], withTrace: Boolean): Iterator[Stmt] = {
+      stmtP.withTrace(withTrace).phrase(tokens)
+    }  
+  }
+
+  object TestDanglingElse {
+      val tokens =
+        List(
+          IfToken,
+          IntToken(5),
+          ThenToken,
+          IfToken,
+          IntToken(6),
+          ThenToken,
+          PassToken,
+          ElseToken,
+          PassToken)
+      val expected =
+        Seq(
+          IfStmt(
+            IntLiteralExp(5),
+            IfStmt(
+              IntLiteralExp(6),
+              PassStmt,
+              Some(PassStmt)),
+            None),
+          IfStmt(
+            IntLiteralExp(5),
+            IfStmt(
+              IntLiteralExp(6),
+              PassStmt,
+              None),
+            Some(PassStmt)))
+
+    def main(args: Array[String]): Unit = {
+      import Parser._
+      val it = parse(tokens, true).foreach(elem => println(s"Solution: $elem"))
     }
   }
 
@@ -312,35 +357,8 @@ package dangling_else {
       // if 5 then if 6 then pass else pass
       // ==> if 5 then (if 6 then pass else pass)
       // ==> if 5 then (if 6 then pass) else pass
-      val tokens =
-        List(
-          IfToken,
-          IntToken(5),
-          ThenToken,
-          IfToken,
-          IntToken(6),
-          ThenToken,
-          PassToken,
-          ElseToken,
-          PassToken)
-      val expected =
-        Seq(
-          IfStmt(
-            IntLiteralExp(5),
-            IfStmt(
-              IntLiteralExp(6),
-              PassStmt,
-              Some(PassStmt)),
-            None),
-          IfStmt(
-            IntLiteralExp(5),
-            IfStmt(
-              IntLiteralExp(6),
-              PassStmt,
-              None),
-            Some(PassStmt)))
-      assertResult(expected) {
-        parse(tokens)
+      assertResult(TestDanglingElse.expected) {
+        parse(TestDanglingElse.tokens)
       }
     }
   }
