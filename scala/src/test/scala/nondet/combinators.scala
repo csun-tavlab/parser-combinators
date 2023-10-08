@@ -281,11 +281,11 @@ package dangling_else {
     }
 
     def parse(tokens: List[Elem]): Seq[Stmt] = {
-      parse(tokens, false).toSeq
+      parse(tokens, Set()).toSeq
     }
 
-    def parse(tokens: List[Elem], withTrace: Boolean): Iterator[Stmt] = {
-      stmtP.withTrace(withTrace).phrase(tokens)
+    def parse(tokens: List[Elem], withProcs: Set[String]): Iterator[Stmt] = {
+      stmtP.withTrace(withProcs).phrase(tokens)
     }  
   }
 
@@ -320,7 +320,9 @@ package dangling_else {
 
     def main(args: Array[String]): Unit = {
       import Parser._
-      val it = parse(tokens, true).foreach(elem => println(s"Solution: $elem"))
+      // val procs = Set("intP", "expP", "ifP", "stmtP", "passP")
+      val procs = Set("expP", "stmtP")
+      val it = parse(tokens, procs).foreach(elem => println(s"Solution: $elem"))
     }
   }
 

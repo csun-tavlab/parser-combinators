@@ -15,23 +15,23 @@ trait Combinators {
 
   object ParseInput {
     def apply(tokens: List[Elem]): ParseInput = {
-      ParseInput(tokens, None)
+      ParseInput(tokens, TraceInformation(0, Set()))
     }
   }
 
+  case class TraceInformation(
+    stackLevel: Int,
+    procs: Set[String]) // procs we track
+
   case class ParseInput(
     tokens: List[Elem],
-    traceLevel: Option[Int] // None if we aren't tracing, otherwise the stack level
+    traceInfo: TraceInformation
   ) {
-    def incrementTraceLevel: ParseInput = {
-      copy(traceLevel = traceLevel.map(_ + 1))
+    def incrementStackLevel: ParseInput = {
+      copy(traceInfo = traceInfo.copy(stackLevel = traceInfo.stackLevel + 1))
     }
-    def withTrace(flag: Boolean): ParseInput = {
-      if (flag) {
-        copy(traceLevel = Some(0))
-      } else {
-        this
-      }
+    def withTrace(procs: Set[String]): ParseInput = {
+      copy(traceInfo = traceInfo.copy(procs = procs))
     }
     def withTokens(newTokens: List[Elem]): ParseInput = {
       copy(tokens = newTokens)
@@ -100,9 +100,9 @@ trait Combinators {
       (self ~ pRaw) ^^ (_._1)
     }
 
-    def withTrace(flag: Boolean): Parser[A] = {
+    def withTrace(procs: Set[String]): Parser[A] = {
       input => {
-        self(input.withTrace(flag))
+        self(input.withTrace(procs))
       }
     }
   }
@@ -138,42 +138,44 @@ trait Combinators {
   // defines a parser that will appear in trace's output
   def proc[A](name: String)(p: => Parser[A]): Parser[A] = {
     input => {
-      input.traceLevel match {
-        case Some(stackLevel) => {
-          new Iterator[(A, List[Elem])] {
-            lazy val wrapped = p.apply(input.incrementTraceLevel)
-            var nextYielded = false
+      if (input.traceInfo.procs(name)) {
+        val stackLevel = input.traceInfo.stackLevel
+        new Iterator[(A, List[Elem])] {
+          lazy val wrapped = p.apply(input.incrementStackLevel)
+          var nextYielded = false
 
-            def printLevel(kind: String, suffix: String): Unit = {
-              val spacer = "  "
-              println(s"${spacer * stackLevel}[$stackLevel] ${kind}: ${name}(${input.tokens})$suffix")
-            }
+          def printLevel(kind: String, suffix: String): Unit = {
+            val spacer = "  "
+            println(s"${spacer * stackLevel}[$stackLevel] ${kind}: ${name}(${input.tokens})$suffix")
+          }
 
-            def hasNext: Boolean = {
-              if (!nextYielded) {
-                printLevel("Call", "")
-              }
-              val retval = wrapped.hasNext
-              if (!retval) {
-                printLevel("Fail", "")
-              }
-              retval
+          def hasNext: Boolean = {
+            if (!nextYielded) {
+              printLevel("Call", "")
             }
+            val retval = wrapped.hasNext
+            if (!retval) {
+              printLevel("Fail", "")
+            }
+            retval
+          }
 
-            def next(): (A, List[Elem]) = {
-              if (!nextYielded) {
-                printLevel("Call", "")
-                nextYielded = true
-              } else {
-                printLevel("Redo", "")
-              }
-              val retval = wrapped.next()
-              printLevel("Return", s" - $retval")
-              retval
+          def next(): (A, List[Elem]) = {
+            if (!nextYielded) {
+              printLevel("Call", "")
+              nextYielded = true
+            } else {
+              printLevel("Redo", "")
             }
+            val retval = wrapped.next()
+            printLevel("Return", s" - $retval")
+            retval
           }
         }
-        case None => p(input)
+      } else {
+        // this isn't one of the procs we are supposed to trace - just pass
+        // it on
+        p(input)
       }
     }
   }
