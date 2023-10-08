@@ -2,6 +2,107 @@ package nondet
 
 case class ~[+A, +B](_1: A, _2: B)
 
+package proc_states {
+  // the iterator protocol stipulates that things *should* be called as follows
+  // while (it.hasNext) {
+  //   val elem = it.next()
+  // }
+  // With this in mind, the actual call is actually on hasNext - this will
+  // be the first point where one enters the iterator.  This is important
+  // in cases where the iterator is empty, as we would otherwise never see it's
+  // output if we put the instrumentation on next.
+  //
+  // hasNext is supposed to be safe to call twice, even if next wasn't called in
+  // between.
+  //
+  // Since hasNext and next are two separate methods, this complicates the logic
+  // quite a bit in terms of what we should print out for debugging.  A state machine
+  // is used to manage this logic.
+  sealed trait TraceState {
+    def hasNext[A](
+      // wrapped is the iterator we are wrapping around
+      wrapped: Iterator[A],
+      // printLevel takes the kind of thing we are printing, and a suffix to stick at the end
+      printLevel: (String, String) => Unit): (Boolean, TraceState)
+    def next[A](
+      wrapped: Iterator[A],
+      printLevel: (String, String) => Unit): (A, TraceState) = {
+      directNext(wrapped, printLevel)
+    }
+    def entry(printLevel: (String, String) => Unit): Unit = {}
+
+    // used when next is called directly, without calling hasNext first
+    def directNext[A](
+      wrapped: Iterator[A],
+      printLevel: (String, String) => Unit): (A, TraceState) = {
+      if (hasNext(wrapped, printLevel)._1) {
+        val a = wrapped.next()
+        printLevel("Return", s" - $a")
+        (a, Yielded)
+      } else {
+        throw new NoSuchElementException()
+      }
+    }
+  }
+  case object Init extends TraceState {
+    // Initial state.  No calls to hasNext or next have been made yet.
+    def hasNext[A](
+      wrapped: Iterator[A],
+      printLevel: (String, String) => Unit): (Boolean, TraceState) = {
+      printLevel("Call", "")
+      val res = wrapped.hasNext
+      (res, if (res) HasSoln else PrintFail)
+    }
+  }
+  case object HasSoln extends TraceState {
+    // initial call to hasNext returned true
+    def hasNext[A](
+      wrapped: Iterator[A],
+      printLevel: (String, String) => Unit): (Boolean, TraceState) = {
+      (true, HasSoln)
+    }
+  }
+  case object Yielded extends TraceState {
+    // we have yielded at least one solution, and the user
+    // just asked for another via hasNext
+    def hasNext[A](
+      wrapped: Iterator[A],
+      printLevel: (String, String) => Unit): (Boolean, TraceState) = {
+      printLevel("Redo", "")
+      val res = wrapped.hasNext
+      (res, if (res) SpamTrue else PrintFail)
+    }
+  }
+  case object SpamTrue extends TraceState {
+    // we reported there is another solution, and are waiting for next
+    def hasNext[A](
+      wrapped: Iterator[A],
+      printLevel: (String, String) => Unit): (Boolean, TraceState) = {
+      (true, SpamTrue)
+    }
+  }
+  case object PrintFail extends TraceState {
+    // No more solutions are left, but we haven't reported it yet
+    def hasNext[A](
+      wrapped: Iterator[A],
+      printLevel: (String, String) => Unit): (Boolean, TraceState) = {
+      (false, SpamFail)
+    }
+    override def entry(printLevel: (String, String) => Unit): Unit = {
+      printLevel("Fail", "")
+    }
+  }
+  case object SpamFail extends TraceState {
+    // We reported no solutions are left, but the user keeps
+    // calling hasNext
+    def hasNext[A](
+      wrapped: Iterator[A],
+      printLevel: (String, String) => Unit): (Boolean, TraceState) = {
+      (false, SpamFail)
+    }
+  }
+} // proc_states
+
 trait Combinators {
   import scala.language.implicitConversions
 
@@ -140,98 +241,25 @@ trait Combinators {
     input => {
       if (input.traceInfo.procs(name)) {
         val stackLevel = input.traceInfo.stackLevel
-        lazy val wrapped = p.apply(input.incrementStackLevel)
 
         def printLevel(kind: String, suffix: String): Unit = {
           val spacer = "  "
           println(s"${spacer * stackLevel}[$stackLevel] ${kind}: ${name}(${input.tokens})$suffix")
         }
 
-        // the iterator protocol stipulates that things *should* be called as follows
-        // while (it.hasNext) {
-        //   val elem = it.next()
-        // }
-        // With this in mind, the actual call is actually on hasNext - this will
-        // be the first point where one enters the iterator.  This is important
-        // in cases where the iterator is empty, as we would otherwise never see it's
-        // output if we put the instrumentation on next.
-        //
-        // hasNext is supposed to be safe to call twice, even if next wasn't called in
-        // between.
-        //
-        // Since hasNext and next are two separate methods, this complicates the logic
-        // quite a bit in terms of what we should print out for debugging.
-        sealed trait TraceState {
-          def hasNext(): (Boolean, TraceState)
-          // def hasNextCalled(retval: Boolean): TraceState
-          def next(): ((A, List[Elem]), TraceState)
-          //def nextCalled: TraceState
-          def entry(): Unit = {}
-
-          def directNext(): ((A, List[Elem]), TraceState) = {
-            // used when next is called directly, without calling hasNext first
-            if (hasNext()._1) {
-              val res = wrapped.next()
-              print("Return", s" - $res")
-              (res, Yielded)
-            } else {
-              throw new NoSuchElementException()
-            }
-          }
-        }
-        case object Init extends TraceState {
-          // Initial state.  No calls to hasNext or next have been made yet.
-          def hasNext(): (Boolean, TraceState) = {
-            printLevel("Call", "")
-            val res = wrapped.hasNext
-            (res, if (res) HasSoln else PrintFail)
-          }
-          def next(): ((A, List[Elem]), TraceState) = directNext()
-        }
-        case object HasSoln extends TraceState {
-          // initial call to hasNext returned true
-          def hasNext(): (Boolean, TraceState) = (true, HasSoln)
-          def next(): ((A, List[Elem]), TraceState) = (wrapped.next(), Yielded)
-        }
-        case object Yielded extends TraceState {
-          // we have yielded at least one solution, and the user
-          // just asked for another via hasNext
-          def hasNext(): (Boolean, TraceState) = {
-            print("Redo", "")
-            val res = wrapped.hasNext
-            (res, if (res) SpamTrue else PrintFail)
-          }
-          def next(): ((A, List[Elem]), TraceState) = directNext()
-        }
-        case object SpamTrue extends TraceState {
-          // we reported there is another solution, and are waiting for next
-          def hasNext(): (Boolean, TraceState) = (true, SpamTrue)
-          def next(): ((A, List[Elem]), TraceState) = directNext()
-        }
-        case object PrintFail extends TraceState {
-          // No more solutions are left, but we haven't reported it yet
-          def hasNext(): (Boolean, TraceState) = (false, SpamFail)
-          def next(): ((A, List[Elem]), TraceState) = directNext()
-          override def entry(): Unit = printLevel("Fail", "")
-        }
-        case object SpamFail extends TraceState {
-          // We reported no solutions are left, but the user keeps
-          // calling hasNext
-          def hasNext(): (Boolean, TraceState) = (false, SpamFail)
-          def next(): ((A, List[Elem]), TraceState) = directNext()
-        }
-
         new Iterator[(A, List[Elem])] {
-          var state: TraceState = Init
+          lazy val wrapped = p.apply(input.incrementStackLevel)
+          var state: proc_states.TraceState = proc_states.Init
+
           def hasNext: Boolean = {
-            val (retval, newState) = state.hasNext()
-            newState.entry()
+            val (retval, newState) = state.hasNext(wrapped, printLevel _)
+            newState.entry(printLevel _)
             state = newState
             retval
           }
           def next(): (A, List[Elem]) = {
-            val (retval, newState) = state.next()
-            newState.entry()
+            val (retval, newState) = state.next(wrapped, printLevel _)
+            newState.entry(printLevel _)
             state = newState
             retval
           }
